@@ -1,0 +1,114 @@
+<html>
+
+<head>
+  <!-- Load TensorFlow.js. This is required -->
+  <script src="tf.min.js" type="text/javascript"></script>
+  <script src="nsfwjs.min.js" type="text/javascript"></script>
+
+  <script>
+
+    var nsfwmodel = null;
+    var nsfwcount = 0;
+    var sfwcount = 0;
+    var busynow = false;
+    var inputqueue = [];
+    var resnames = "";
+    var queueidx = 0;
+    var currfile ="";
+    
+    tf.enableProdMode();
+    // Load the model.
+    nsfwjs.load('https://hordeautowebbridge.github.io/mdl/', { type: 'graph' }).then((model) => {
+      nsfwmodel = model;
+      document.getElementById("testfile").style.display = "block";
+      document.getElementById("loading").style.display = "none";
+      setInterval(workerfn,100);
+    });
+
+    function workerfn() 
+    {
+      if (!busynow) {
+        console.log("Queue length: " + inputqueue.length);
+        var reader = new FileReader();
+
+        reader.onload = function () {
+          let testimg = document.getElementById("testimg");
+          testimg.src = reader.result;
+          testimg.onload = function () {
+            testnsfw(testimg);
+          };
+        };
+
+        if (queueidx < inputqueue.length) {
+          busynow = true;
+          let ff = inputqueue[queueidx];
+          currfile = inputqueue[queueidx].name;
+          ++queueidx;       
+          reader.readAsDataURL(ff);          
+        }
+      }
+    }
+
+    function load_file(event) {
+      let input = event.target;
+
+      if (input.files.length > 0) {
+        nsfwcount = 0; sfwcount = 0;
+        inputqueue = input.files;
+        queueidx = 0;
+        currfile="";
+        resnames = "";
+        console.log(input.files);
+      } else {
+        console.log("No file to load");
+      }
+    };
+
+    function testnsfw(img) {
+      if (nsfwmodel != null) {
+        // Classify the image.    
+        nsfwmodel.classify(img).then((predictions) => {
+          //convert to dict
+          let pred = {};
+          for(var i=0;i<predictions.length;++i)
+          {
+            pred[predictions[i].className] = predictions[i].probability;
+          }
+          console.log(pred);
+          let outstr = "";
+          if(pred.Porn > 0.33 || pred.Sexy > 0.35 || pred.Hentai > 0.115)
+          {
+            outstr = "<span style='color:red'><h1>NSFW</h1></span>";
+            resnames += "<span style='color:red'>"+currfile+"</span><br>";
+            nsfwcount++;
+          }else{
+            outstr = "<span style='color:green'><h1>SFW</h1></span>";   
+            resnames += "<span style='color:green'>"+currfile+"</span><br>"; 
+            sfwcount++;    
+          }
+          outstr += "<h4>(SFW:"+sfwcount+", NSFW:"+nsfwcount+")</h4>"+resnames;
+          document.getElementById("nsfwverdict").innerHTML = outstr;
+          busynow = false;
+        });
+      }
+    }
+  </script>
+
+</head>
+
+<body>
+  <h4 id="loading">Loading Model, Please Wait...</h4>
+  <span id="testfile" style="display:none;">
+    Select a file to test against the NSFW filter<br>
+    <input id="nsfwfile" type="file" onchange="load_file(event)" multiple>
+
+    <br><br>
+    <img width="150" height="150" style="border-radius: 10%;" id="testimg"
+      src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAEAQMAAACTPww9AAAAAXNSR0IB2cksfwAAAAlwSFlzAAALEwAACxMBAJqcGAAAAANQTFRF0NDQLRgfIQAAAAtJREFUeJxjYIAAAAAIAAG3WHOVAAAAAElFTkSuQmCC">
+   <span id="nsfwverdict"><h3>No Image Loaded</h3></span>
+   
+  </span>
+ 
+  </body>
+
+</html>
