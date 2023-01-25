@@ -796,6 +796,7 @@
               "blacklist": [],
               "models": prepare_model_list(),
               "bridge_version": 7,
+              "bridge_agent": "HordeAutoWebBridge:7:https://hordeautowebbridge.github.io/",
               "threads": 1,
               "max_pixels": localsettings.maxpixels,
               "allow_img2img": localsettings.allowimg2img, 
@@ -844,15 +845,20 @@
                     let poimg = document.getElementById("pendingoutputimg");
                     poimg.src = i1;
                     poimg.onload = function () {
-                      let skipcensor = (popdata.payload.use_nsfw_censor?false:true);
+                      let shouldcensor = (popdata.payload.use_nsfw_censor?true:false);
                       poimg.onload = null;
-                      testnsfw(poimg, skipcensor, (imgisnsfw) => {
+                      testnsfw(poimg, false, (imgisnsfw) => {
 
                         if(imgisnsfw)
                         {
-                          msginfo("NSFW image censor applied.");
-                          submit_payload.generation = censoredimgdata;
-                          submit_payload.censored = true;
+                          if(shouldcensor)
+                          {
+                            msginfo("NSFW image detected. Censor requested and applied.");
+                            submit_payload.generation = censoredimgdata;
+                            submit_payload.censored = true;
+                          }else{
+                            msginfo("NSFW image detected. Censor was not requested.");
+                          }
                         }
 
                         dbglog(submit_payload);
