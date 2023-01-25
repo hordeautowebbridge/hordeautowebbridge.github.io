@@ -187,7 +187,7 @@
     const a1111_options_endpoint = "/sdapi/v1/options";
     const a1111_txt2img_endpoint = "/sdapi/v1/txt2img";
     const a1111_img2img_endpoint = "/sdapi/v1/img2img";
-    const client_agent = "HordeAutoWebBridge:1:concedo#4289";
+    const client_agent = "HordeAutoWebBridge:2:concedo#4289";
     const stablehorde_finduser_endpoint = "/api/v2/find_user";
     const stablehorde_perf_endpoint = "/api/v2/status/performance";
     const stablehorde_pop_endpoint = "/api/v2/generate/pop";
@@ -219,6 +219,7 @@
 
 
     var preventmultisessionguid = Math.floor(Math.random()*999999);
+    var jobsdonedict = {};
     var horde_userdata = {};
     var horde_perfinfo = {};
     var horde_workers = [];
@@ -318,6 +319,7 @@
       horde_perfinfo = {};
       horde_workers = [];
       session_uptime_start = new Date();
+      jobsdonedict = {};
       jobsdone = 0;
       sessionkudos = 0;
       lasttasktime = null;
@@ -606,11 +608,11 @@
       })
         .then(y => y.json())
         .then(resp => {
-          dbglog("Model switch completed, wait 1s");
+          dbglog("Model switch completed, wait 100ms");
           setTimeout(() => {
             current_loaded_model = modelfilename;
             onDone();
-          }, 1000);
+          }, 100);
         }).catch((error) => {
           ++errorsencountered;
           msginfo("Switch Models Error: " + error, true);
@@ -633,11 +635,13 @@
       let parsedseed = ((req_payload.payload.seed==null||req_payload.payload.seed==""||req_payload.payload.seed=="-1"||req_payload.payload.seed==-1)?randSeed:parseInt(req_payload.payload.seed));
       let postprocess = (req_payload.payload.post_processing!=null&&req_payload.payload.post_processing.includes("GFPGAN"));
       let sampler = map_sampler(req_payload.payload.sampler_name+(req_payload.payload.karras?"_ka":""));
+      let tiling = req_payload.payload.tiling?true:false;
       let sourceimg = req_payload.source_image; //for img2img and paint
       let sourcemask = req_payload.source_mask;
       let source_processing = req_payload.source_processing;
           
       //first, if we're using the wrong model, switch the model
+      //now we added override settings, but still want switch model to prevent weights from constantly reloading
       let desired_model = find_local_modelinfo(req_payload.model);
       handle_switch_model(desired_model.file,()=>{
         //next, prepare the payload
@@ -654,10 +658,33 @@
           "width": req_payload.payload.width,
           "height": req_payload.payload.height,
           "restore_faces": postprocess,
-          "tiling": false,
+          "tiling": tiling,
           "negative_prompt": negprompt,
           "do_not_save_samples":true, //no idea if these work, but just try
           "do_not_save_grid":true,
+
+          "enable_hr": false,
+          "eta": 0,
+          "s_churn": 0,
+          "s_tmax": 0,
+          "s_tmin": 0,
+          "s_noise": 1,
+          "override_settings": {
+            "sd_model_checkpoint": desired_model.file,
+            "eta_noise_seed_delta":0.0,
+            "CLIP_stop_at_last_layers":1.0,
+            "eta_ddim":0.0,
+            "eta_ancestral":1.0,
+            "ddim_discretize":"uniform",
+            "img2img_fix_steps":false,
+            "enable_emphasis":true,
+            "use_old_emphasis_implementation":false,
+            "sd_hypernetwork":"None",
+            "inpainting_mask_weight":1.0,
+            "initial_noise_multiplier":1.0,
+            "do_not_add_watermark":true,
+            "comma_padding_backtrack":20.0
+          }
         }
 
         if(sourceimg!=null)
@@ -847,17 +874,29 @@
                     poimg.onload = function () {
                       let shouldcensor = (popdata.payload.use_nsfw_censor?true:false);
                       poimg.onload = null;
+
+                      let txsplits = popdata.payload.prompt.split("###");
+                      let promptisnsfw = prompt_is_nsfw(txsplits[0]);
+
                       testnsfw(poimg, false, (imgisnsfw) => {
 
-                        if(imgisnsfw)
+                        if(imgisnsfw || promptisnsfw)
                         {
+                          let censorinfo = "NSFW image and prompt detected.";
+                          if(imgisnsfw && !promptisnsfw)
+                          {                           
+                            censorinfo = "NSFW image detected.";
+                          }else if(!imgisnsfw && promptisnsfw){
+                            censorinfo = "NSFW prompt detected.";
+                          }
+
                           if(shouldcensor)
                           {
-                            msginfo("NSFW image detected. Censor requested and applied.");
+                            msginfo(censorinfo + " Censor requested and applied.");
                             submit_payload.generation = censoredimgdata;
                             submit_payload.censored = true;
                           }else{
-                            msginfo("NSFW image detected. Censor was not requested.");
+                            msginfo(censorinfo + " Censor was not requested.");
                           }
                         }
 
@@ -883,7 +922,7 @@
                               ++jobsdone;
                               lasttasktime = new Date();
                               lasttasktimetaken = (lasttasktime - job_time_start) / 1000;
-
+                              
                             } else {
                               ++errorsencountered;
                               msginfo("Generation Was Rejected! Reason: " + completed.message, true);
@@ -897,8 +936,14 @@
                           });
 
                         if (dbgplus) {
+                          if(!(popdata.model in jobsdonedict))
+                          {
+                            jobsdonedict[popdata.model] = 0;
+                          }
+                          jobsdonedict[popdata.model] += 1;
+
                           //print out generation info
-                          document.getElementById("dbgplusinfo").innerText = JSON.stringify(popdata);
+                          document.getElementById("dbgplusinfo").innerText = JSON.stringify(jobsdonedict) +"\n"+JSON.stringify(popdata);
                           if (popdata.source_image != null) {
                             let i2 = "data:image/jpeg;base64," + popdata.source_image;
                             document.getElementById("i2iinputimg").src = i2;
@@ -954,7 +999,7 @@
     {
       dbglog("msginfo: " + str);
       msginfolog.push({m:str,err:isErr});
-      if(msginfolog.length>4)
+      if(msginfolog.length>5)
       {
         msginfolog.shift();
       }
@@ -1059,6 +1104,12 @@
         document.getElementById("togglepause").classList.add("bg_orange");
         document.getElementById("togglepause").classList.remove("bg_green");
       }
+    }
+
+    function prompt_is_nsfw(inputtext) {
+      if (inputtext == null || inputtext == "") { return false; }
+      let foundnsfw = inputtext.match(/\b(cock|deepthroat|dick|cumshot|lesbian|fuck|fucked|fucking|sperm|naked|nipples|tits|boobs|ass|butt|fingering|masturbate|masturbating|bitch|blowjob|pussy|piss|asshole|dildo|erection|foreskin|handjob|nude|penis|porn|vibrator|virgin|vagina|vulva|threesome|orgy|bdsm|hickey|condom|testicles|anal|bareback|bukkake|creampie|stripper|strap-on|missionary|clitoris|clit|cowgirl|fleshlight|sex|buttplug|milf|oral|sucking|bondage|orgasm|scissoring|railed|slut|cumming|cunt|faggot|sissy|anal|anus|cum|scat|nsfw|xxx|explicit|erotic)\b/gmi);
+      return (foundnsfw == null) ? false : true;
     }
 
     //img is the image html element. if null or model not loaded, returns sfw
@@ -1246,7 +1297,7 @@
   </main>
   <hr class="my-4">
   <footer class="text-muted text-center text-small">
-    <p class="mb-1">HordeAutoWebBridge v1 - Made by Concedo</p>   
+    <p class="mb-1">HordeAutoWebBridge v2 - Made by Concedo</p>   
     <br>
   </footer>
 </div>
