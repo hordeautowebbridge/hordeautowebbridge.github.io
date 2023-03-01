@@ -187,7 +187,7 @@
     const a1111_options_endpoint = "/sdapi/v1/options";
     const a1111_txt2img_endpoint = "/sdapi/v1/txt2img";
     const a1111_img2img_endpoint = "/sdapi/v1/img2img";
-    const client_agent = "HordeAutoWebBridge:2:concedo#4289";
+    const client_agent = "HordeAutoWebBridge:3:concedo#4289";
     const stablehorde_finduser_endpoint = "/api/v2/find_user";
     const stablehorde_perf_endpoint = "/api/v2/status/performance";
     const stablehorde_pop_endpoint = "/api/v2/generate/pop";
@@ -794,6 +794,33 @@
       return mlist;
     }
 
+    function handle_r2(data, r2url, onDone) {
+        if (r2url == "" || r2url == null) {
+          dbglog("R2 Upload Skipped")
+          onDone(true);
+        } else {
+          fetch("data:image/jpeg;base64," + data)
+            .then(img1 => img1.blob())
+            .then(imgblob => {
+              fetch(r2url, {
+                method: 'PUT', // or 'PUT'
+                headers: {
+                },
+                body: imgblob,
+              }).then(done => {
+                dbglog("R2 Upload OK")
+                onDone(true);                
+              }).catch((error) => {
+                onDone(false);
+                msginfo("Error Upload R2: " + error, true);
+              });
+            }).catch((error) => {
+              onDone(false);
+              msginfo("Error Convert R2: " + error, true);
+            });
+        }
+    }
+
     function poll_worker()
     {
       //only do stuff if we're fully connected
@@ -822,8 +849,8 @@
               "nsfw": localsettings.allownsfw,
               "blacklist": [],
               "models": prepare_model_list(),
-              "bridge_version": 7,
-              "bridge_agent": "HordeAutoWebBridge:7",
+              "bridge_version": 8,
+              "bridge_agent": "HordeAutoWebBridge:8",
               "threads": 1,
               "max_pixels": localsettings.maxpixels,
               "allow_img2img": localsettings.allowimg2img, 
@@ -900,40 +927,53 @@
                           }
                         }
 
-                        dbglog(submit_payload);
-
-                        fetch(localsettings.horde_base_url + stablehorde_submit_endpoint, {
-                          method: 'POST', // or 'PUT'
-                          headers: {
-                            'apikey': localsettings.apikey,
-                            'Client-Agent': client_agent,
-                            'Content-Type': 'application/json',
-                          },
-                          body: JSON.stringify(submit_payload),
-                        })
-                          .then(y => y.json())
-                          .then(completed => {
-                            dbglog(completed);
-                            //generation submitted
-                            let rw = completed.reward;
-                            if (rw) {
-                              msginfo("Generation Submitted Successfully! Kudos Earned: " + rw);
-                              sessionkudos += parseFloat(rw);
-                              ++jobsdone;
-                              lasttasktime = new Date();
-                              lasttasktimetaken = (lasttasktime - job_time_start) / 1000;
-                              
-                            } else {
-                              ++errorsencountered;
-                              msginfo("Generation Was Rejected! Reason: " + completed.message, true);
-                            }
-                            current_task_id = null;
-
-                          }).catch((error) => {
+                        //see if r2 upload available, upload if it is    
+                        //r2 seems to be stuck on cors                   
+                        handle_r2(submit_payload.generation, null/*popdata.r2_upload*/, (r2ok) => {
+                          if (!r2ok) {
                             ++errorsencountered;
                             current_task_id = null;
-                            msginfo("Error Submitting Generation: " + error, true);
-                          });
+                          } else {
+                            // if (popdata.r2_upload && popdata.r2_upload != "") {
+                            //   submit_payload.generation = "R2";
+                            // }
+
+                            dbglog(submit_payload);
+
+                            fetch(localsettings.horde_base_url + stablehorde_submit_endpoint, {
+                              method: 'POST', // or 'PUT'
+                              headers: {
+                                'apikey': localsettings.apikey,
+                                'Client-Agent': client_agent,
+                                'Content-Type': 'application/json',
+                              },
+                              body: JSON.stringify(submit_payload),
+                            })
+                              .then(y => y.json())
+                              .then(completed => {
+                                dbglog(completed);
+                                //generation submitted
+                                let rw = completed.reward;
+                                if (rw) {
+                                  msginfo("Generation Submitted Successfully! Kudos Earned: " + rw);
+                                  sessionkudos += parseFloat(rw);
+                                  ++jobsdone;
+                                  lasttasktime = new Date();
+                                  lasttasktimetaken = (lasttasktime - job_time_start) / 1000;
+
+                                } else {
+                                  ++errorsencountered;
+                                  msginfo("Generation Was Rejected! Reason: " + completed.message, true);
+                                }
+                                current_task_id = null;
+
+                              }).catch((error) => {
+                                ++errorsencountered;
+                                current_task_id = null;
+                                msginfo("Error Submitting Generation: " + error, true);
+                              });
+                          }
+                        });     
 
                         if (dbgplus) {
                           if(!(popdata.model in jobsdonedict))
